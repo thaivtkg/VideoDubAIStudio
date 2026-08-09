@@ -1,21 +1,31 @@
-import os
-from core.subtitle_manager import SubtitleManager
-from ai.tts.engines.mock_tts import MockTTSEngine
-from workers.tts_worker import TTSWorker, TTSTask
 import json
-from core.project_manager import ProjectManager
+import os
+
+from PySide6.QtCore import QEvent, Qt, QUrl
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QDockWidget,
-    QTextEdit, QLabel, QFrame, QMenu,QFileDialog,QProgressDialog
+    QDockWidget,
+    QFileDialog,
+    QFrame,
+    QLabel,
+    QMainWindow,
+    QMenu,  # noqa: F401
+    QProgressDialog,
+    QTextEdit,  # noqa: F401
+    QVBoxLayout,
+    QWidget,  # noqa: F401
 )
+
+from ai.tts.engines.mock_tts import MockTTSEngine
+from core.project_manager import ProjectManager
 from core.srt_parser import parse_srt
-from PySide6.QtCore import Qt
-from gui.widgets.video_player import VideoPlayerWidget
-from gui.widgets.subtitle_table import SubtitleTableWidget
+from core.subtitle_manager import SubtitleManager
 from gui.widgets.project_panel import ProjectPanelWidget
 from gui.widgets.properties_panel import PropertiesPanelWidget
-from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
-from PySide6.QtCore import Qt, QUrl
+from gui.widgets.subtitle_table import SubtitleTableWidget
+from gui.widgets.video_player import VideoPlayerWidget
+from workers.tts_worker import TTSTask, TTSWorker
+
 
 class PlaceholderWidget(QFrame):
     """Widget tạm thời để giữ chỗ trong Sprint 1"""
@@ -112,6 +122,16 @@ class MainWindow(QMainWindow):
         self.properties_panel.btn_generate.clicked.connect(self.generate_single_voice)
         self.properties_panel.btn_preview.clicked.connect(self.toggle_preview_voice)
         self.preview_player.playbackStateChanged.connect(self.on_preview_state_changed)
+
+        # THÊM LOGIC AUTO-SAVE TẠI ĐÂY
+        # Bắt sự kiện khi người dùng thay đổi Voice, Speed hoặc Emotion
+        self.properties_panel.cbo_voice.currentIndexChanged.connect(self.auto_save_settings)
+        self.properties_panel.cbo_emotion.currentIndexChanged.connect(self.auto_save_settings)
+        # Sử dụng sliderReleased thay vì valueChanged để tránh việc save liên tục hàng chục lần khi người dùng đang kéo chuột
+        self.properties_panel.sld_speed.sliderReleased.connect(self.auto_save_settings)
+        
+        # Kết nối sự kiện mất focus (người dùng gõ xong chữ rồi click ra ngoài) cho trường Text
+        self.properties_panel.txt_text.installEventFilter(self)
 
     def action_import_video(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Chọn file Video", "",
@@ -454,3 +474,19 @@ class MainWindow(QMainWindow):
         # Báo cho bảng TableView vẽ lại để hiển thị cập nhật mới nhất
         self.subtitle_table.model.update_data(self.subtitle_manager.get_all())
         self.statusBar().showMessage("Tiến trình tạo Audio hàng loạt hoàn tất.", 5000)
+
+    def auto_save_settings(self):
+        """Tự động lưu khi người dùng thay đổi cấu hình qua giao diện mà không cần bấm nút Save"""
+        # Nếu đang không chọn dòng nào thì bỏ qua
+        if self.properties_panel.current_index < 0:
+            return
+            
+        # Gọi lại hàm save đã viết sẵn ở S2.7
+        self.save_subtitle_changes()
+
+    def eventFilter(self, source, event):
+        """Bắt sự kiện FocusOut của ô TextEdit để auto-save chữ"""
+        from PySide6.QtCore import QEvent
+        if source is self.properties_panel.txt_text and event.type() == QEvent.FocusOut:
+            self.auto_save_settings()
+        return super().eventFilter(source, event)

@@ -1,5 +1,7 @@
 import sys
+
 from PySide6.QtWidgets import QApplication
+
 from gui.main_window import MainWindow
 
 
@@ -15,7 +17,8 @@ def main():
     app.setFont(font)
 
     # 3. Đưa Style Sheet lên mức Global (Áp dụng cho toàn bộ app)
-    app.setStyleSheet("""
+    app.setStyleSheet(
+        """
         QMainWindow { background-color: #1E1E1E; color: white; }
 
         QMenuBar { background-color: #1E1E1E; color: white; border-bottom: 1px solid #333; }
@@ -33,7 +36,8 @@ def main():
         /* THÊM KHỐI NÀY ĐỂ HIỂN THỊ STATUS BAR RÕ RÀNG */
         QStatusBar { background-color: #007ACC; color: white; font-weight: bold; }
         QStatusBar::item { border: none; }
-    """)
+    """
+    )
 
     window = MainWindow()
     window.show()
