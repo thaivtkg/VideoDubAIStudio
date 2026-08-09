@@ -1,0 +1,25 @@
+# Python Environment
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+
+# Project Specific (Tránh push file Media và file sinh ra tự động)
+cache/
+Temp/
+Output/
+Logs/
+*.mp4
+*.mkv
+*.mov
+*.avi
+*.wav
+
+# IDE settings
+.vscode/
+.idea/
+
+# OS generated files
+.DS_Store
+Thumbs.db
