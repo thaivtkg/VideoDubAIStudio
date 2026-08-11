@@ -1,6 +1,8 @@
 import os
-from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
+
 from PySide6.QtCore import QObject, QUrl
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+
 
 class AudioManager(QObject):
     def __init__(self, pool_size=3):
@@ -8,8 +10,8 @@ class AudioManager(QObject):
         self.pool_size = pool_size
         self.players = []
         self.outputs = []
+        self.last_sync_time = 0  # [MỚI] Dùng để detect hành vi Seek
         
-        # Khởi tạo Pool để hỗ trợ phát đè nhiều âm thanh (Overlap) và tránh trễ I/O
         for _ in range(self.pool_size):
             audio_output = QAudioOutput()
             player = QMediaPlayer()
@@ -17,21 +19,27 @@ class AudioManager(QObject):
             self.players.append(player)
             self.outputs.append(audio_output)
             
-        self.active_clips = {} # Mapping: subtitle_id -> player_index
+        self.active_clips = {} 
 
     def tick(self, current_time_ms: int, active_clips: list):
-        """Được gọi liên tục từ VideoPlayer để đồng bộ hóa âm thanh"""
         current_time_sec = current_time_ms / 1000.0
         active_ids = {clip.subtitle_id for clip in active_clips}
         
-        # 1. Dừng và nhả file các audio đã vượt quá thời gian phát (End of Clip)
+        # [MỚI] Detect Seek: Nếu bước nhảy thời gian > 300ms -> User vừa tua video
+        if abs(current_time_ms - self.last_sync_time) > 300:
+            self.stop_all()  # Ép nhả toàn bộ player để mount lại từ đầu với offset mới
+            self.active_clips.clear()
+            
+        self.last_sync_time = current_time_ms
+        
+        # 1. Dừng các audio đã vượt quá thời gian phát
         for sub_id, player_idx in list(self.active_clips.items()):
             if sub_id not in active_ids:
                 self.players[player_idx].stop()
                 self.players[player_idx].setSource(QUrl())
                 del self.active_clips[sub_id]
 
-        # 2. Kích hoạt phát các audio mới đi vào mốc thời gian
+        # 2. Kích hoạt/Re-sync các audio
         for clip in active_clips:
             if clip.subtitle_id not in self.active_clips:
                 free_idx = self._get_free_player_index()
@@ -39,8 +47,6 @@ class AudioManager(QObject):
                     player = self.players[free_idx]
                     player.setSource(QUrl.fromLocalFile(clip.audio_path))
                     
-                    # CỰC KỲ QUAN TRỌNG: Tính toán Offset
-                    # Nếu người dùng click tua video vào giữa đoạn audio, phải tua audio đi tương ứng
                     offset_sec = current_time_sec - clip.start_time
                     if offset_sec > 0:
                         player.setPosition(int(offset_sec * 1000))
