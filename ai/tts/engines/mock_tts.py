@@ -1,6 +1,9 @@
-import wave
+import os
 import time
+import wave
+
 from ai.tts.base_tts import BaseTTSEngine
+
 
 class MockTTSEngine(BaseTTSEngine):
     def get_engine_name(self) -> str:
@@ -23,23 +26,29 @@ class MockTTSEngine(BaseTTSEngine):
     def unload_model(self):
         pass
 
-    def generate(self, text: str, voice_id: str, speed: float, pitch: float, emotion: str, output_path: str) -> bool:
-        try:
-            # Giả lập thời gian AI xử lý (phụ thuộc độ dài text)
-            time.sleep(min(len(text) * 0.05, 2.0))
-
-            # Sinh file WAV tĩnh dài 2 giây
-            sample_rate = 44100
-            duration = 2.0
-            n_frames = int(sample_rate * duration)
-
-            with wave.open(output_path, 'w') as wav_file:
-                wav_file.setnchannels(1)
-                wav_file.setsampwidth(2) # 16-bit
-                wav_file.setframerate(sample_rate)
-                wav_file.writeframes(b'\x00\x00' * n_frames)
-
-            return True
-        except Exception as e:
-            # Lỗi ở tầng Infra phải được ném lên để Worker bắt và truyền về UI
-            raise e
+    def generate(self, text, voice_id, speed, pitch, emotion, output_path):
+        """Giả lập AI tạo Audio có thời lượng phụ thuộc vào độ dài chữ và tốc độ Speed"""
+        time.sleep(0.1)  # Giả lập độ trễ mạng để thấy Progress bar chạy
+        
+        # 1. Giả lập: Người bình thường đọc 1 ký tự mất khoảng 0.08 giây
+        base_duration = len(text) * 0.08
+        if base_duration < 0.5: 
+            base_duration = 0.5  # Tối thiểu nửa giây cho một âm thanh
+            
+        # 2. Áp dụng ép tốc độ (Speed) từ Auto-Fit
+        actual_duration = base_duration / speed
+        
+        # 3. Tạo file WAV trống (im lặng) có độ dài đúng bằng actual_duration
+        sample_rate = 44100
+        num_samples = int(actual_duration * sample_rate)
+        
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        
+        with wave.open(output_path, 'w') as wav_file:
+            wav_file.setnchannels(1)           # Mono
+            wav_file.setsampwidth(2)           # 16-bit
+            wav_file.setframerate(sample_rate) # 44.1 kHz
+            wav_file.writeframes(b'\x00\x00' * num_samples) # Ghi data rỗng
+            
+        # TRẢ VỀ DURATION THỰC TẾ thay vì True/False
+        return actual_duration

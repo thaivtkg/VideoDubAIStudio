@@ -16,13 +16,15 @@ class SubtitleTableModel(QAbstractTableModel):
         row = self._data[index.row()]
         col = index.column()
 
-        if role == Qt.DisplayRole:
+        if role in (Qt.DisplayRole, Qt.EditRole):
             if col == 0: return row.id
             elif col == 1: return f"{row.start_time:.3f}"
             elif col == 2: return f"{row.end_time:.3f}"
             elif col == 3: return row.text
             elif col == 4: return row.voice_id # Hiển thị tên giọng
             elif col == 5:
+                if role == Qt.EditRole: return "" # Không edit được Icon ở cột 5
+                
                 # Chuyển đổi trạng thái thành Icon/Symbol
                 if row.audio_status == "generated": return "✓"
                 elif row.audio_status == "generating": return "◷"
@@ -115,3 +117,5 @@ class SubtitleTableWidget(QTableView):
                 border: 1px solid #333; 
             }
         """)
+
+    

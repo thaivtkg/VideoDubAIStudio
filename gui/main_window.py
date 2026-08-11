@@ -17,13 +17,17 @@ from PySide6.QtWidgets import (
 )
 
 from ai.tts.engines.mock_tts import MockTTSEngine
+from core.audio_manager import AudioManager
 from core.project_manager import ProjectManager
 from core.srt_parser import parse_srt
 from core.subtitle_manager import SubtitleManager
+from core.timeline_manager import TimelineManager
+from gui.widgets.audio_timeline import AudioTimelineWidget
 from gui.widgets.project_panel import ProjectPanelWidget
 from gui.widgets.properties_panel import PropertiesPanelWidget
 from gui.widgets.subtitle_table import SubtitleTableWidget
 from gui.widgets.video_player import VideoPlayerWidget
+from workers.export_worker import ExportWorker
 from workers.tts_worker import TTSTask, TTSWorker
 
 
@@ -71,6 +75,8 @@ class MainWindow(QMainWindow):
         self.project_manager.new_project("Untitled")
         # Quản lý dữ liệu và AI Engine
         self.subtitle_manager = SubtitleManager()
+        self.timeline_manager = TimelineManager()    # MỚI
+        self.audio_manager = AudioManager()
         self.tts_engine = MockTTSEngine()
         self.tts_worker = None
 
@@ -88,10 +94,12 @@ class MainWindow(QMainWindow):
         file_menu.addAction("Import Subtitle...", self.action_import_subtitle)
 
         file_menu.addSeparator()
+        file_menu.addAction("Export Video...", self.action_export_video)
         file_menu.addAction("Exit", self.close)
 
         voice_menu = menubar.addMenu("Voice")
         voice_menu.addAction("Generate All Pending", self.action_generate_all_pending)
+        voice_menu.addAction("Auto-Fit Overlapping Audio", self.action_auto_fit)
 
     def _setup_ui(self):
         # 1. Center: Video Player
@@ -107,21 +115,45 @@ class MainWindow(QMainWindow):
         # 3. Right Dock: Properties
         dock_properties = QDockWidget("Properties", self)
         self.properties_panel = PropertiesPanelWidget()
-        dock_properties.setWidget(self.properties_panel)
+        
+        # [MỚI] Bọc Properties Panel vào thanh cuộn (ScrollArea) để không bị che khuất
+        from PySide6.QtWidgets import QFrame, QScrollArea
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.NoFrame)
+        scroll_area.setWidget(self.properties_panel)
+        
+        dock_properties.setWidget(scroll_area)
         self.addDockWidget(Qt.RightDockWidgetArea, dock_properties)
 
-        # 4. Bottom Dock: Subtitle Table
-        dock_timeline = QDockWidget("Subtitle Timeline", self)
-        self.subtitle_table = SubtitleTableWidget()
-        dock_timeline.setWidget(self.subtitle_table)
-        self.addDockWidget(Qt.BottomDockWidgetArea, dock_timeline)
 
-        # 5. Kết nối sự kiện (Signals / Slots)
+
+        # 4. Bottom Dock: Subtitle Table
+        self.dock_table = QDockWidget("Subtitle Timeline", self)
+        self.subtitle_table = SubtitleTableWidget()
+        self.dock_table.setWidget(self.subtitle_table)
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.dock_table)
+
+        # 5. Timeline Panel (MỚI)
+        self.timeline_widget = AudioTimelineWidget()
+        self.dock_timeline = QDockWidget("Audio Timeline", self)
+        self.dock_timeline.setWidget(self.timeline_widget)
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.dock_timeline)
+        
+        # [QUAN TRỌNG]: Tách Dock theo chiều dọc để Timeline chiếm toàn bộ chiều ngang bên dưới Table
+        self.splitDockWidget(self.dock_table, self.dock_timeline, Qt.Vertical)
+
+        # 6. Kết nối sự kiện (Signals / Slots)
         self.subtitle_table.selectionModel().selectionChanged.connect(self.on_subtitle_selected)
         self.properties_panel.btn_save.clicked.connect(self.save_subtitle_changes)
         self.properties_panel.btn_generate.clicked.connect(self.generate_single_voice)
         self.properties_panel.btn_preview.clicked.connect(self.toggle_preview_voice)
         self.preview_player.playbackStateChanged.connect(self.on_preview_state_changed)
+        
+        self.video_player.player.positionChanged.connect(self.sync_audio_with_video)
+        self.video_player.player.playbackStateChanged.connect(self.handle_video_state_change)
+        self.video_player.player.durationChanged.connect(self.timeline_widget.set_duration)
+        self.video_player.player.positionChanged.connect(self.timeline_widget.set_position)
 
         # THÊM LOGIC AUTO-SAVE TẠI ĐÂY
         # Bắt sự kiện khi người dùng thay đổi Voice, Speed hoặc Emotion
@@ -189,14 +221,26 @@ class MainWindow(QMainWindow):
                 self.properties_panel.lbl_audio_status.setText("Status: ✓ Generated")
                 self.properties_panel.lbl_audio_duration.setText(f"Duration: {sub_item.audio_duration:.2f} s")
                 self.properties_panel.btn_preview.setEnabled(True)
+                self.properties_panel.btn_generate.setEnabled(True) # LUÔN BẬT
+                
+            elif sub_item.audio_status == "generating":
+                self.properties_panel.lbl_audio_status.setText("Status: ◷ Generating...")
+                self.properties_panel.lbl_audio_duration.setText("Duration: 0.00 s")
+                self.properties_panel.btn_preview.setEnabled(False)
+                self.properties_panel.btn_generate.setEnabled(False) # KHOÁ LẠI VÌ ĐANG CHẠY
+                
             elif sub_item.audio_status == "error":
                 self.properties_panel.lbl_audio_status.setText("Status: ⚠ Error")
                 self.properties_panel.lbl_audio_duration.setText("Duration: 0.00 s")
                 self.properties_panel.btn_preview.setEnabled(False)
+                self.properties_panel.btn_generate.setEnabled(True) # LUÔN BẬT
+                
             else:
                 self.properties_panel.lbl_audio_status.setText("Status: ○ Not Generated")
                 self.properties_panel.lbl_audio_duration.setText("Duration: 0.00 s")
                 self.properties_panel.btn_preview.setEnabled(False)
+                self.properties_panel.btn_generate.setEnabled(True) # LUÔN BẬT
+
 
             # Seek video an toàn
             video_duration = self.video_player.player.duration()
@@ -235,6 +279,8 @@ class MainWindow(QMainWindow):
 
                 # XỬ LÝ CACHE: Nếu hash thay đổi (do Text hoặc Cấu hình Voice thay đổi)
                 if old_hash != new_hash:
+                    was_generated = (sub_item.audio_status == "generated")
+                    
                     sub_item.audio_status = "not_generated"
                     sub_item.audio_path = ""
                     sub_item.audio_duration = 0.0
@@ -243,14 +289,19 @@ class MainWindow(QMainWindow):
                     self.properties_panel.lbl_audio_status.setText("Status: ○ Not Generated")
                     self.properties_panel.lbl_audio_duration.setText("Duration: 0.00 s")
                     self.properties_panel.btn_preview.setEnabled(False)
-                    self.statusBar().showMessage("Cấu hình thay đổi, yêu cầu Generate lại Audio.", 5000)
+                    
+                    if was_generated:
+                        self.statusBar().showMessage("Cấu hình thay đổi, yêu cầu Generate lại Audio.", 5000)
+                    else:
+                        self.statusBar().showMessage(f"Đã cập nhật cấu hình cho ID: {sub_item.id}", 5000)
                 else:
-                    self.statusBar().showMessage(f"Đã cập nhật dòng ID: {sub_item.id}")
+                    self.statusBar().showMessage(f"Đã cập nhật thông số thời gian cho ID: {sub_item.id}", 5000)
 
                 # Cập nhật TableView
                 top_left = self.subtitle_table.model.index(row, 1)
                 bottom_right = self.subtitle_table.model.index(row, 3)
                 self.subtitle_table.model.dataChanged.emit(top_left, bottom_right)
+                self.update_timeline_data()
 
             except ValueError:
                 self.statusBar().showMessage("Lỗi: Start/End phải là số hợp lệ!", 5000)
@@ -283,6 +334,7 @@ class MainWindow(QMainWindow):
                     # Nạp ngược lại vào Manager và Table
                     self.subtitle_manager.load_subtitles(proj.subtitles)
                     self.subtitle_table.model.update_data(self.subtitle_manager.get_all())
+                    self.update_timeline_data()
 
                 if proj.srt_path:
                     self.project_panel.update_srt(proj.srt_path)
@@ -336,26 +388,59 @@ class MainWindow(QMainWindow):
         self.tts_worker.start()
 
     def on_tts_finished(self, sub_id, output_path, duration):
-        row = self.properties_panel.current_index
-        sub_item = self.subtitle_manager.get(row)
+        # 1. Lấy dữ liệu item chính xác dựa vào ID của luồng nền trả về
+        sub_item = self.subtitle_manager.get_by_id(sub_id)
+        if not sub_item: return
 
-        if sub_item and sub_item.id == sub_id:
-            self.subtitle_manager.set_audio_status(row, "generated", output_path, duration)
-            self.properties_panel.btn_generate.setEnabled(True)
-            self.properties_panel.btn_preview.setEnabled(True)
+        # Tìm row index thực tế trên TableView
+        all_subs = self.subtitle_manager.get_all()
+        actual_row = -1
+        for i, sub in enumerate(all_subs):
+            if sub.id == sub_id:
+                actual_row = i
+                break
+
+        if actual_row != -1:
+            # 2. Cập nhật Model và ép TableView vẽ lại ô trạng thái (cột 5)
+            self.subtitle_manager.set_audio_status(actual_row, "generated", output_path, duration)
+            index = self.subtitle_table.model.index(actual_row, 5)
+            self.subtitle_table.model.dataChanged.emit(index, index)
+            self.update_timeline_data() # Đồng bộ xuống Audio Timeline
+
+        # 3. Mở khóa lại nút Generate (Luồng nền đã rảnh)
+        self.properties_panel.btn_generate.setEnabled(True)
+        self.statusBar().showMessage(f"Tạo Voice thành công cho ID: {sub_id}", 5000)
+
+        # 4. Chỉ cập nhật giao diện PropertiesPanel nếu người dùng đang ĐỨNG TRÊN đúng dòng vừa chạy xong
+        current_row = self.properties_panel.current_index
+        if current_row == actual_row:
             self.properties_panel.lbl_audio_status.setText("Status: ✓ Generated")
             self.properties_panel.lbl_audio_duration.setText(f"Duration: {duration:.2f} s")
-            self.statusBar().showMessage(f"Tạo Voice thành công cho ID: {sub_id}", 5000)
+            self.properties_panel.btn_preview.setEnabled(True)
 
     def on_tts_error(self, sub_id, error_msg):
-        row = self.properties_panel.current_index
-        sub_item = self.subtitle_manager.get(row)
+        sub_item = self.subtitle_manager.get_by_id(sub_id)
+        if not sub_item: return
 
-        if sub_item and sub_item.id == sub_id:
-            self.subtitle_manager.set_audio_status(row, "error", error=error_msg)
-            self.properties_panel.btn_generate.setEnabled(True)
+        all_subs = self.subtitle_manager.get_all()
+        actual_row = -1
+        for i, sub in enumerate(all_subs):
+            if sub.id == sub_id:
+                actual_row = i
+                break
+
+        if actual_row != -1:
+            self.subtitle_manager.set_audio_status(actual_row, "error", error=error_msg)
+            index = self.subtitle_table.model.index(actual_row, 5)
+            self.subtitle_table.model.dataChanged.emit(index, index)
+
+        self.properties_panel.btn_generate.setEnabled(True)
+        self.statusBar().showMessage(f"Lỗi tạo Voice (ID: {sub_id}): {error_msg}", 5000)
+
+        current_row = self.properties_panel.current_index
+        if current_row == actual_row:
             self.properties_panel.lbl_audio_status.setText("Status: ⚠ Error")
-            self.statusBar().showMessage(f"Lỗi tạo Voice (ID: {sub_id}): {error_msg}", 5000)
+            self.properties_panel.btn_preview.setEnabled(False)
 
     def toggle_preview_voice(self):
         """Xử lý bật/tắt khi nhấn nút Preview"""
@@ -465,7 +550,19 @@ class MainWindow(QMainWindow):
         sub_item = self.subtitle_manager.get_by_id(sub_id)
         if sub_item:
             sub_item.audio_status = "error"
-            sub_item.audio_error = error_msg
+            # sub_item.audio_error = error_msg
+
+        # [QUAN TRỌNG] Phải tăng thanh tiến trình kể cả khi task đó bị lỗi, nếu không UI sẽ treo ở 0% mãi mãi
+        if hasattr(self, 'progress_dialog') and not self.progress_dialog.wasCanceled():
+            self.progress_dialog.setValue(self.progress_dialog.value() + 1)
+            
+        # Cập nhật giao diện Properties nếu người dùng đang click trúng dòng bị lỗi
+        current_row = self.properties_panel.current_index
+        if current_row >= 0:
+            current_sub = self.subtitle_manager.get(current_row)
+            if current_sub and current_sub.id == sub_id:
+                self.properties_panel.lbl_audio_status.setText("Status: ⚠ Error")
+                self.properties_panel.btn_preview.setEnabled(False)
 
     def on_batch_completed(self):
         if hasattr(self, 'progress_dialog'):
@@ -473,6 +570,7 @@ class MainWindow(QMainWindow):
 
         # Báo cho bảng TableView vẽ lại để hiển thị cập nhật mới nhất
         self.subtitle_table.model.update_data(self.subtitle_manager.get_all())
+        self.update_timeline_data()
         self.statusBar().showMessage("Tiến trình tạo Audio hàng loạt hoàn tất.", 5000)
 
     def auto_save_settings(self):
@@ -490,3 +588,135 @@ class MainWindow(QMainWindow):
         if source is self.properties_panel.txt_text and event.type() == QEvent.FocusOut:
             self.auto_save_settings()
         return super().eventFilter(source, event)
+
+    def update_timeline_data(self):
+        """Cập nhật dữ liệu cho TimelineManager mỗi khi có thay đổi về Audio"""
+        subtitles = self.subtitle_manager.get_all()
+        self.timeline_manager.sync_from_subtitles(subtitles)
+        # THÊM ĐOẠN NÀY: Ép đồng bộ chiều dài video (đề phòng tín hiệu bị lỡ khi load)
+        if hasattr(self, 'video_player') and self.video_player.player.duration() > 0:
+            self.timeline_widget.set_duration(self.video_player.player.duration())
+
+        self.timeline_widget.update_data(subtitles)
+
+    def sync_audio_with_video(self, position_ms):
+        """Kích hoạt bởi VideoPlayer mỗi khi video tiến lên, truyền mốc thời gian cho AudioManager"""
+        if self.video_player.player.playbackState() == QMediaPlayer.PlayingState:
+            current_time_sec = position_ms / 1000.0
+            active_clips = self.timeline_manager.get_clips_in_range(current_time_sec)
+            self.audio_manager.tick(position_ms, active_clips)
+
+    def handle_video_state_change(self, state):
+        """Ngắt toàn bộ âm thanh lồng tiếng nếu video bị Tạm dừng (Pause) hoặc Dừng (Stop)"""
+        if state in (QMediaPlayer.PausedState, QMediaPlayer.StoppedState):
+            self.audio_manager.stop_all()
+
+    def action_auto_fit(self):
+        """S3.4: Tự động điều chỉnh Speed cho các câu bị Overlap (Audio dài hơn Subtitle)"""
+        pending_tasks = False
+        
+        for sub in self.subtitle_manager.get_all():
+            if sub.audio_status == "generated" and sub.audio_duration > 0:
+                target_duration = sub.end_time - sub.start_time
+                
+                # Nếu Audio thực tế dài hơn thời gian cho phép của Subtitle
+                if sub.audio_duration > target_duration:
+                    # Tính tỷ lệ cần ép (Ví dụ: Audio 3s, Subtitle 2s -> Cần tua nhanh gấp 1.5 lần)
+                    ratio = sub.audio_duration / target_duration
+                    new_speed = sub.speed * ratio
+                    
+                    # Giới hạn tốc độ tối đa (2.0x) để tránh giọng bị biến dạng hoàn toàn
+                    if new_speed > 2.0:
+                        new_speed = 2.0
+                        
+                    # 1. Cập nhật tốc độ mới
+                    sub.speed = new_speed
+                    
+                    # 2. Xóa Cache cũ, reset về Not Generated
+                    sub.audio_status = "not_generated"
+                    sub.audio_path = ""
+                    sub.audio_duration = 0.0
+                    pending_tasks = True
+                    
+        if pending_tasks:
+            # Vẽ lại Table và Timeline
+            self.subtitle_table.model.update_data(self.subtitle_manager.get_all())
+            self.update_timeline_data()
+            
+            # Cập nhật Properties Panel nếu đang trúng dòng vừa bị reset
+            current_row = self.properties_panel.current_index
+            if current_row >= 0:
+                current_sub = self.subtitle_manager.get(current_row)
+                self.properties_panel.sld_speed.setValue(int(current_sub.speed * 100))
+                self.properties_panel.lbl_audio_status.setText("Status: ○ Not Generated")
+            
+            self.statusBar().showMessage("Đã tính toán Auto-Fit. Đang tạo lại Audio...", 5000)
+            
+            # Tự động kích hoạt Batch Generate để sinh lại các file với Speed mới
+            self.action_generate_all_pending()
+        else:
+            self.statusBar().showMessage("Không có câu thoại nào bị chèn lấn (Overlap).", 5000)
+
+    def action_export_video(self):
+        """S3.5: Giao diện chuẩn bị và gọi luồng Export Video"""
+        # Kiểm tra xem đã có video gốc chưa
+        if not hasattr(self.project_manager.current_project, 'video_path') or not self.project_manager.current_project.video_path:
+            self.statusBar().showMessage("Lỗi: Vui lòng Import Video gốc trước khi Export!", 5000)
+            return
+
+        # Chọn nơi lưu file
+        output_path, _ = QFileDialog.getSaveFileName(self, "Xuất Video (Export)", "", "Video Files (*.mp4)")
+        if not output_path:
+            return
+
+        # Lấy danh sách Audio từ Timeline
+        self.update_timeline_data()
+        clips = list(self.timeline_manager.clips.values())
+        
+        if not clips:
+            self.statusBar().showMessage("Không có âm thanh nào trên Timeline để xuất!", 5000)
+            return
+            
+        video_duration_ms = self.video_player.player.duration()
+        if video_duration_ms <= 0:
+            self.statusBar().showMessage("Lỗi: Không xác định được thời lượng Video.", 5000)
+            return
+
+        # Hiển thị UI Progress
+        self.export_progress = QProgressDialog("Đang chuẩn bị xuất video...", "Hủy (Ép buộc)", 0, 100, self)
+        self.export_progress.setWindowTitle("Exporting Video")
+        self.export_progress.setWindowModality(Qt.WindowModal)
+        self.export_progress.setMinimumDuration(0)
+        self.export_progress.setValue(0)
+
+        # Khởi chạy luồng FFmpeg ngầm
+        self.export_worker = ExportWorker(
+            video_path=self.project_manager.current_project.video_path,
+            clips=clips,
+            output_path=output_path,
+            video_duration_ms=video_duration_ms
+        )
+        
+        self.export_worker.progress.connect(self.on_export_progress)
+        self.export_worker.finished.connect(self.on_export_finished)
+        self.export_worker.error.connect(self.on_export_error)
+        
+        # Nếu bấm Hủy thì kill tiến trình (Lưu ý: FFmpeg bị kill có thể sinh ra file rác)
+        self.export_progress.canceled.connect(self.export_worker.terminate) 
+        
+        self.export_worker.start()
+        
+    def on_export_progress(self, value, text):
+        if hasattr(self, 'export_progress') and not self.export_progress.wasCanceled():
+            self.export_progress.setValue(value)
+            self.export_progress.setLabelText(text)
+
+    def on_export_finished(self, output_path):
+        if hasattr(self, 'export_progress'):
+            self.export_progress.setValue(100)
+        self.statusBar().showMessage(f"Xuất video thành công: {output_path}", 10000)
+
+    def on_export_error(self, error_msg):
+        if hasattr(self, 'export_progress'):
+            self.export_progress.cancel()
+        self.statusBar().showMessage(f"Lỗi xuất video: {error_msg}", 10000)
