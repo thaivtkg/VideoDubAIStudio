@@ -94,7 +94,8 @@ class MainWindow(QMainWindow):
         file_menu.addAction("Import Subtitle...", self.action_import_subtitle)
 
         file_menu.addSeparator()
-        file_menu.addAction("Export Video...", self.action_export_video)
+        file_menu.addAction("Export Video (MP4)...", self.action_export_video)
+        file_menu.addAction("Export Audio (WAV)...", self.action_export_audio)
         file_menu.addAction("Exit", self.close)
 
         voice_menu = menubar.addMenu("Voice")
@@ -658,18 +659,24 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Không có câu thoại nào bị chèn lấn (Overlap).", 5000)
 
     def action_export_video(self):
-        """S3.5: Giao diện chuẩn bị và gọi luồng Export Video"""
-        # Kiểm tra xem đã có video gốc chưa
+        """Kích hoạt xuất file MP4"""
+        self._start_export(format_type="mp4", file_filter="Video Files (*.mp4)")
+
+    def action_export_audio(self):
+        """Kích hoạt xuất file WAV (Master Audio)"""
+        self._start_export(format_type="wav", file_filter="Audio Files (*.wav)")
+
+    def _start_export(self, format_type, file_filter):
+        """Hàm dùng chung để khởi chạy Export Worker"""
         if not hasattr(self.project_manager.current_project, 'video_path') or not self.project_manager.current_project.video_path:
             self.statusBar().showMessage("Lỗi: Vui lòng Import Video gốc trước khi Export!", 5000)
             return
 
-        # Chọn nơi lưu file
-        output_path, _ = QFileDialog.getSaveFileName(self, "Xuất Video (Export)", "", "Video Files (*.mp4)")
+        title = "Xuất Video thành phẩm" if format_type == "mp4" else "Xuất Âm thanh tổng"
+        output_path, _ = QFileDialog.getSaveFileName(self, title, "", file_filter)
         if not output_path:
             return
 
-        # Lấy danh sách Audio từ Timeline
         self.update_timeline_data()
         clips = list(self.timeline_manager.clips.values())
         
@@ -683,26 +690,27 @@ class MainWindow(QMainWindow):
             return
 
         # Hiển thị UI Progress
-        self.export_progress = QProgressDialog("Đang chuẩn bị xuất video...", "Hủy (Ép buộc)", 0, 100, self)
-        self.export_progress.setWindowTitle("Exporting Video")
+        self.export_progress = QProgressDialog(f"Đang chuẩn bị xuất {format_type.upper()}...", "Hủy (An toàn)", 0, 100, self)
+        self.export_progress.setWindowTitle(f"Exporting {format_type.upper()}")
         self.export_progress.setWindowModality(Qt.WindowModal)
         self.export_progress.setMinimumDuration(0)
         self.export_progress.setValue(0)
 
-        # Khởi chạy luồng FFmpeg ngầm
+        # Truyền format_type xuống Worker
         self.export_worker = ExportWorker(
             video_path=self.project_manager.current_project.video_path,
             clips=clips,
             output_path=output_path,
-            video_duration_ms=video_duration_ms
+            video_duration_ms=video_duration_ms,
+            export_format=format_type
         )
         
         self.export_worker.progress.connect(self.on_export_progress)
         self.export_worker.finished.connect(self.on_export_finished)
         self.export_worker.error.connect(self.on_export_error)
         
-        # Nếu bấm Hủy thì kill tiến trình (Lưu ý: FFmpeg bị kill có thể sinh ra file rác)
-        self.export_progress.canceled.connect(self.export_worker.terminate) 
+        # [QUAN TRỌNG NHẤT] Gọi đúng hàm .cancel() đã viết thay vì .terminate() mặc định
+        self.export_progress.canceled.connect(self.export_worker.cancel) 
         
         self.export_worker.start()
         

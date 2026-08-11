@@ -1,79 +1,95 @@
 import os
 import subprocess
-from PySide6.QtCore import QThread, Signal
+
 from pydub import AudioSegment
+from PySide6.QtCore import QThread, Signal
+
 
 class ExportWorker(QThread):
     progress = Signal(int, str)       # % hoàn thành, câu thông báo
     finished = Signal(str)            # Đường dẫn file output
     error = Signal(str)               # Lỗi nếu có
 
-    def __init__(self, video_path, clips, output_path, video_duration_ms):
+    def __init__(self, video_path, clips, output_path, video_duration_ms, export_format="mp4"):
         super().__init__()
         self.video_path = video_path
         self.clips = clips            # Danh sách AudioClip từ TimelineManager
         self.output_path = output_path
         self.video_duration_ms = video_duration_ms
+        self.export_format = export_format
+
+        self.process = None       # Giữ reference của FFmpeg process
+        self._is_cancelled = False
+
+    def cancel(self):
+        """Được gọi từ UI khi user bấm nút Cancel trên Dialog"""
+        self._is_cancelled = True
+        if self.process:
+            self.process.terminate() # Bắn tín hiệu dừng an toàn cho FFmpeg
+            self.process.wait()
 
     def run(self):
+        temp_audio_path = "cache/temp_master_audio.wav"
         try:
             self.progress.emit(10, "Đang khởi tạo trục âm thanh...")
-            
-            # 1. Tạo một track âm thanh trống có độ dài bằng với Video
-            # (Đảm bảo file âm thanh đầu ra có cùng chiều dài với video gốc)
             master_audio = AudioSegment.silent(duration=self.video_duration_ms)
 
-            # 2. Trộn (Overlay) từng file âm thanh nhỏ vào track chính
             total_clips = len(self.clips)
             for i, clip in enumerate(self.clips):
+                if self._is_cancelled: return
+                
                 if os.path.exists(clip.audio_path):
                     self.progress.emit(10 + int(40 * (i / total_clips)), f"Đang hòa trộn Audio ID: {clip.subtitle_id}...")
-                    
-                    # Đọc file audio của từng câu phụ đề
                     clip_audio = AudioSegment.from_wav(clip.audio_path)
-                    
-                    # Chèn vào đúng vị trí start_time (tính bằng mili-giây)
                     position_ms = int(clip.start_time * 1000)
                     master_audio = master_audio.overlay(clip_audio, position=position_ms)
 
-            # 3. Xuất track âm thanh tổng ra file tạm
             self.progress.emit(60, "Đang xuất file âm thanh tổng (WAV)...")
-            temp_audio_path = "cache/temp_master_audio.wav"
-            master_audio.export(temp_audio_path, format="wav")
+            
+            if self._is_cancelled: return
+            
+            # Xuất WAV trực tiếp nếu user chọn Export WAV
+            if self.export_format == "wav":
+                master_audio.export(self.output_path, format="wav")
+                self.progress.emit(100, "Hoàn tất xuất file Audio (WAV)!")
+                self.finished.emit(self.output_path)
+                return
 
-            # 4. Dùng FFmpeg để ghép Audio tổng vào Video gốc (Tạm thời thay thế hoàn toàn tiếng gốc)
+            # Nếu là MP4, xuất ra file Temp rồi dùng FFmpeg
+            master_audio.export(temp_audio_path, format="wav")
             self.progress.emit(80, "Đang ghép Âm thanh vào Video (Muxing)...")
             
             command = [
-                "ffmpeg",
-                "-y",                           # Ghi đè file nếu đã tồn tại
-                "-i", self.video_path,          # Input Video
-                "-i", temp_audio_path,          # Input Audio lồng tiếng
-                "-c:v", "copy",                 # Copy y nguyên hình ảnh (render siêu tốc)
-                "-c:a", "aac",                  # Encode audio sang chuẩn MP4
-                "-map", "0:v:0",                # Lấy hình từ Input 0 (Video)
-                "-map", "1:a:0",                # Lấy tiếng từ Input 1 (Audio dubbing)
+                "ffmpeg", "-y",
+                "-i", self.video_path,
+                "-i", temp_audio_path,
+                "-c:v", "copy",
+                "-c:a", "aac",
+                "-map", "0:v:0",
+                "-map", "1:a:0",
                 self.output_path
             ]
             
-            # Khởi chạy FFmpeg ngầm, ẩn cửa sổ cmd
-            process = subprocess.Popen(
+            self.process = subprocess.Popen(
                 command, 
                 stdout=subprocess.PIPE, 
                 stderr=subprocess.PIPE,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             )
-            stdout, stderr = process.communicate()
+            stdout, stderr = self.process.communicate()
             
-            if process.returncode != 0:
+            if self._is_cancelled: return
+            
+            if self.process.returncode != 0:
                 raise Exception(f"Lỗi FFmpeg: {stderr.decode('utf-8', errors='ignore')}")
 
-            # Dọn dẹp file tạm
-            if os.path.exists(temp_audio_path):
-                os.remove(temp_audio_path)
-
-            self.progress.emit(100, "Hoàn tất!")
+            self.progress.emit(100, "Hoàn tất xuất Video!")
             self.finished.emit(self.output_path)
 
         except Exception as e:
-            self.error.emit(str(e))
+            if not self._is_cancelled:
+                self.error.emit(str(e))
+        finally:
+            # Luôn dọn dẹp file rác dù thành công, lỗi hay bị huỷ ngang
+            if os.path.exists(temp_audio_path):
+                os.remove(temp_audio_path)
