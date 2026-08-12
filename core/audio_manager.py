@@ -25,14 +25,13 @@ class AudioManager(QObject):
         current_time_sec = current_time_ms / 1000.0
         active_ids = {clip.subtitle_id for clip in active_clips}
         
-        # [MỚI] Detect Seek: Nếu bước nhảy thời gian > 300ms -> User vừa tua video
         if abs(current_time_ms - self.last_sync_time) > 300:
-            self.stop_all()  # Ép nhả toàn bộ player để mount lại từ đầu với offset mới
+            self.stop_all()
             self.active_clips.clear()
             
         self.last_sync_time = current_time_ms
         
-        # 1. Dừng các audio đã vượt quá thời gian phát
+        # 1. Dừng các audio không còn active
         for sub_id, player_idx in list(self.active_clips.items()):
             if sub_id not in active_ids:
                 self.players[player_idx].stop()
@@ -45,13 +44,12 @@ class AudioManager(QObject):
                 free_idx = self._get_free_player_index()
                 if free_idx is not None and os.path.exists(clip.audio_path):
                     player = self.players[free_idx]
-                    player.setSource(QUrl.fromLocalFile(clip.audio_path))
                     
+                    # [SỬA TẠI ĐÂY] Gọi hàm an toàn thay vì gán trực tiếp
                     offset_sec = current_time_sec - clip.start_time
-                    if offset_sec > 0:
-                        player.setPosition(int(offset_sec * 1000))
-                        
-                    player.play()
+                    offset_ms = int(offset_sec * 1000) if offset_sec > 0 else 0
+                    self.play_clip_safely(player, clip.audio_path, offset_ms)
+                    
                     self.active_clips[clip.subtitle_id] = free_idx
 
     def _get_free_player_index(self):
@@ -69,13 +67,16 @@ class AudioManager(QObject):
         self.active_clips.clear()
 
     def play_clip_safely(self, player, clip_path, offset_ms):
-        """Đảm bảo Backend của Qt nạp xong Media vào bộ nhớ trước khi tua và phát"""
+        """Đảm bảo Backend nạp xong Media trước khi tua và phát (có bắt lỗi an toàn)"""
         def on_status_changed(status):
             if status in (QMediaPlayer.MediaStatus.LoadedMedia, QMediaPlayer.MediaStatus.BufferedMedia):
                 if offset_ms > 0:
                     player.setPosition(offset_ms)
                 player.play()
-                # Hủy kết nối Signal tạm thời để tránh rò rỉ bộ nhớ
+                player.mediaStatusChanged.disconnect(on_status_changed)
+                
+            # [PHÒNG THỦ] Tránh rò rỉ Signal nếu file bị hỏng hoặc backend từ chối nạp
+            elif status == QMediaPlayer.MediaStatus.InvalidMedia:
                 player.mediaStatusChanged.disconnect(on_status_changed)
 
         player.mediaStatusChanged.connect(on_status_changed)

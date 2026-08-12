@@ -624,19 +624,24 @@ class MainWindow(QMainWindow):
                 target_duration = sub.end_time - sub.start_time
                 
                 # Nếu Audio thực tế dài hơn thời gian cho phép của Subtitle
+                # [SỬA TẠI ĐÂY] Đưa toàn bộ logic clamp và cập nhật vào trong IF
                 if sub.audio_duration > target_duration:
-                    # Tính tỷ lệ cần ép (Ví dụ: Audio 3s, Subtitle 2s -> Cần tua nhanh gấp 1.5 lần)
                     ratio = sub.audio_duration / target_duration
                     new_speed = sub.speed * ratio
                     
-                    # [SỬA] Kiểm tra trần giới hạn
-                if new_speed > 2.0:
-                    new_speed = 2.0
-                    overflow_warning = True # Đánh dấu vẫn sẽ bị tràn
-                
-                sub.speed = new_speed
-                sub.audio_status = "not_generated"
-                pending_tasks = True
+                    # Kiểm tra trần giới hạn
+                    if new_speed > 2.0:
+                        new_speed = 2.0
+                        overflow_warning = True 
+                        
+                    # Gán thông số mới
+                    sub.speed = new_speed
+                    
+                    # Reset trạng thái
+                    sub.audio_status = "not_generated"
+                    sub.audio_path = ""
+                    sub.audio_duration = 0.0
+                    pending_tasks = True
                     
         if pending_tasks:
             # Vẽ lại Table và Timeline

@@ -32,5 +32,9 @@ class BaseTTSEngine(ABC):
 
     @abstractmethod
     def generate(self, text: str, voice_id: str, speed: float, pitch: float, emotion: str, output_path: str) -> float:
-        """Thực thi tạo file audio WAV. Trả về True nếu thành công."""
+        """
+        Tạo file audio WAV từ văn bản.
+        Trả về thời lượng thực tế của file audio tính bằng giây (float).
+        Ném ra Exception nếu thất bại.
+        """
         pass
