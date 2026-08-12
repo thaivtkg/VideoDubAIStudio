@@ -32,30 +32,46 @@ class ExportWorker(QThread):
         temp_audio_path = "cache/temp_master_audio.wav"
         try:
             self.progress.emit(10, "Đang khởi tạo trục âm thanh...")
-            master_audio = AudioSegment.silent(duration=self.video_duration_ms)
 
+            # 1. Tính toán thời lượng tối thiểu cần thiết cho Master Track
+            # (Phòng trường hợp câu thoại cuối cùng dài hơn thời lượng video gốc)
+            max_clip_end_ms = self.video_duration_ms
+            for clip in self.clips:
+                clip_end_ms = int((clip.start_time + clip.duration) * 1000)
+                if clip_end_ms > max_clip_end_ms:
+                    max_clip_end_ms = clip_end_ms
+
+            # Tạo Master Silent với chiều dài an toàn nhất
+            master_audio = AudioSegment.silent(duration=max_clip_end_ms, frame_rate=44100)
+
+            # 2. Overlay các audio vào Master Track
             total_clips = len(self.clips)
             for i, clip in enumerate(self.clips):
-                if self._is_cancelled: return
+                if self._is_cancelled:
+                    return
                 
                 if os.path.exists(clip.audio_path):
-                    self.progress.emit(10 + int(40 * (i / total_clips)), f"Đang hòa trộn Audio ID: {clip.subtitle_id}...")
+                    self.progress.emit(
+                        10 + int(40 * (i / total_clips)), 
+                        f"Đang hòa trộn Audio ID: {clip.subtitle_id}..."
+                    )
                     clip_audio = AudioSegment.from_wav(clip.audio_path)
                     position_ms = int(clip.start_time * 1000)
                     master_audio = master_audio.overlay(clip_audio, position=position_ms)
 
             self.progress.emit(60, "Đang xuất file âm thanh tổng (WAV)...")
             
-            if self._is_cancelled: return
+            if self._is_cancelled:
+                return
             
-            # Xuất WAV trực tiếp nếu user chọn Export WAV
+            # 3. Kịch bản Xuất WAV trực tiếp
             if self.export_format == "wav":
                 master_audio.export(self.output_path, format="wav")
                 self.progress.emit(100, "Hoàn tất xuất file Audio (WAV)!")
                 self.finished.emit(self.output_path)
                 return
 
-            # Nếu là MP4, xuất ra file Temp rồi dùng FFmpeg
+            # 4. Kịch bản Xuất MP4 (Cần xuất file Temp trước rồi dùng FFmpeg ghép vào)
             master_audio.export(temp_audio_path, format="wav")
             self.progress.emit(80, "Đang ghép Âm thanh vào Video (Muxing)...")
             
@@ -78,7 +94,8 @@ class ExportWorker(QThread):
             )
             stdout, stderr = self.process.communicate()
             
-            if self._is_cancelled: return
+            if self._is_cancelled:
+                return
             
             if self.process.returncode != 0:
                 raise Exception(f"Lỗi FFmpeg: {stderr.decode('utf-8', errors='ignore')}")
@@ -90,6 +107,6 @@ class ExportWorker(QThread):
             if not self._is_cancelled:
                 self.error.emit(str(e))
         finally:
-            # Luôn dọn dẹp file rác dù thành công, lỗi hay bị huỷ ngang
+            # 5. Luôn dọn dẹp file rác dù thành công, lỗi hay bị huỷ ngang
             if os.path.exists(temp_audio_path):
                 os.remove(temp_audio_path)
