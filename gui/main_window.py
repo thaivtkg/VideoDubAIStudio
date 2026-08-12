@@ -58,6 +58,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Video Dubbing Studio v0.1")
         self.resize(1280, 720)
         self.setMinimumSize(1280, 720)
+        
 
         # Cài đặt Theme cơ bản (Dark Mode)
         self.setStyleSheet("QMainWindow { background-color: #1E1E1E; color: white; }")
@@ -165,6 +166,7 @@ class MainWindow(QMainWindow):
         
         # Kết nối sự kiện mất focus (người dùng gõ xong chữ rồi click ra ngoài) cho trường Text
         self.properties_panel.txt_text.installEventFilter(self)
+        self.video_player.seek_requested.connect(self.on_user_seek)
 
     def action_import_video(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Chọn file Video", "",
@@ -615,6 +617,7 @@ class MainWindow(QMainWindow):
     def action_auto_fit(self):
         """S3.4: Tự động điều chỉnh Speed cho các câu bị Overlap (Audio dài hơn Subtitle)"""
         pending_tasks = False
+        overflow_warning = False
         
         for sub in self.subtitle_manager.get_all():
             if sub.audio_status == "generated" and sub.audio_duration > 0:
@@ -626,18 +629,14 @@ class MainWindow(QMainWindow):
                     ratio = sub.audio_duration / target_duration
                     new_speed = sub.speed * ratio
                     
-                    # Giới hạn tốc độ tối đa (2.0x) để tránh giọng bị biến dạng hoàn toàn
-                    if new_speed > 2.0:
-                        new_speed = 2.0
-                        
-                    # 1. Cập nhật tốc độ mới
-                    sub.speed = new_speed
-                    
-                    # 2. Xóa Cache cũ, reset về Not Generated
-                    sub.audio_status = "not_generated"
-                    sub.audio_path = ""
-                    sub.audio_duration = 0.0
-                    pending_tasks = True
+                    # [SỬA] Kiểm tra trần giới hạn
+                if new_speed > 2.0:
+                    new_speed = 2.0
+                    overflow_warning = True # Đánh dấu vẫn sẽ bị tràn
+                
+                sub.speed = new_speed
+                sub.audio_status = "not_generated"
+                pending_tasks = True
                     
         if pending_tasks:
             # Vẽ lại Table và Timeline
@@ -655,6 +654,10 @@ class MainWindow(QMainWindow):
             
             # Tự động kích hoạt Batch Generate để sinh lại các file với Speed mới
             self.action_generate_all_pending()
+            if overflow_warning:
+                self.statusBar().showMessage("Cảnh báo: Một số câu quá dài đã bị giới hạn ở tốc độ tối đa (2.0x) và vẫn bị chèn lấn!", 8000)
+            else:
+                self.statusBar().showMessage("Đã tính toán Auto-Fit thành công trong giới hạn an toàn.", 5000)
         else:
             self.statusBar().showMessage("Không có câu thoại nào bị chèn lấn (Overlap).", 5000)
 
@@ -728,3 +731,11 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'export_progress'):
             self.export_progress.cancel()
         self.statusBar().showMessage(f"Lỗi xuất video: {error_msg}", 10000)
+
+    def on_user_seek(self, position_ms):
+        """Khi người dùng Seek, ép AudioManager nhả toàn bộ Player và resync lại từ đầu"""
+        self.audio_manager.stop_all()
+        self.audio_manager.active_clips.clear()
+        current_time_sec = position_ms / 1000.0
+        active_clips = self.timeline_manager.get_clips_in_range(current_time_sec)
+        self.audio_manager.tick(position_ms, active_clips, is_seeking=True)

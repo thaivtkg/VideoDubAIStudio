@@ -67,3 +67,16 @@ class AudioManager(QObject):
             player.stop()
             player.setSource(QUrl())
         self.active_clips.clear()
+
+    def play_clip_safely(self, player, clip_path, offset_ms):
+        """Đảm bảo Backend của Qt nạp xong Media vào bộ nhớ trước khi tua và phát"""
+        def on_status_changed(status):
+            if status in (QMediaPlayer.MediaStatus.LoadedMedia, QMediaPlayer.MediaStatus.BufferedMedia):
+                if offset_ms > 0:
+                    player.setPosition(offset_ms)
+                player.play()
+                # Hủy kết nối Signal tạm thời để tránh rò rỉ bộ nhớ
+                player.mediaStatusChanged.disconnect(on_status_changed)
+
+        player.mediaStatusChanged.connect(on_status_changed)
+        player.setSource(QUrl.fromLocalFile(clip_path))

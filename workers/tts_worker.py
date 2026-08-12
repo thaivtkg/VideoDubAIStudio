@@ -29,12 +29,15 @@ class TTSWorker(QThread):
     def run(self):
         # 1. Nạp model một lần duy nhất trước khi chạy Batch
         try:
-            if not self.engine.load_model():
-                self.task_error.emit(-1, "Không thể load mô hình TTS.")
-                return
+           if not self.engine.load_model():
+              # [SỬA] Đảm bảo luôn thông báo và đóng Progress Dialog ở Main Thread
+              self.task_error.emit(-1, "Không thể load mô hình TTS. Tiến trình bị hủy.")
+              self.all_completed.emit() # Ép Progress Dialog đóng lại an toàn
+              return
         except Exception as e:
-            self.task_error.emit(-1, f"Lỗi khởi tạo TTS: {str(e)}")
-            return
+             self.task_error.emit(-1, f"Lỗi khởi tạo TTS: {str(e)}")
+             self.all_completed.emit()
+             return
 
         # 2. Xử lý tuần tự các task
         for task in self.tasks:
