@@ -184,12 +184,15 @@ class MainWindow(QMainWindow):
         if file_path:
             subtitles_data = parse_srt(file_path)
             if subtitles_data:
-                # Nạp dữ liệu vào SubtitleManager
+                # Nạp dữ liệu vào SubtitleManager (Hàm này đã tự clear danh sách cũ)
                 self.subtitle_manager.load_subtitles(subtitles_data)
 
                 # Cập nhật Table và Panel
                 self.subtitle_table.model.update_data(self.subtitle_manager.get_all())
                 self.project_panel.update_srt(file_path)
+
+                # [SỬA TẠI ĐÂY] Đồng bộ Timeline ngay lập tức để xóa Audio Clips của SRT cũ
+                self.update_timeline_data()
 
                 self.project_manager.current_project.srt_path = file_path
                 self.project_manager.current_project.subtitles = subtitles_data
