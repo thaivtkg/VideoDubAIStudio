@@ -75,7 +75,7 @@ class PropertiesPanelWidget(QFrame):
         row_speed = QHBoxLayout()
         self.lbl_speed_val = QLabel("1.00x")
         self.sld_speed = QSlider(Qt.Horizontal)
-        self.sld_speed.setRange(75, 125)  # 0.75x đến 1.25x
+        self.sld_speed.setRange(50, 200) # 0.75x đến 1.25x
         self.sld_speed.setValue(100)
         self.sld_speed.valueChanged.connect(lambda v: self.lbl_speed_val.setText(f"{v / 100:.2f}x"))
         row_speed.addWidget(QLabel("Speed:"))
