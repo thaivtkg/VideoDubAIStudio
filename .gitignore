@@ -23,3 +23,7 @@ Logs/
 # OS generated files
 .DS_Store
 Thumbs.db
+bin/ffmpeg.exe
+bin/ffprobe.exe
+tests/Sprint3_5_Test_Bundle.zip
+tests/
