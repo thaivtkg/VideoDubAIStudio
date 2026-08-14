@@ -15,6 +15,10 @@ Logs/
 *.mov
 *.avi
 *.wav
+tests/
+bin/
+*.srt
+ffmpeg.exe
 
 # IDE settings
 .vscode/
