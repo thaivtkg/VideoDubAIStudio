@@ -21,11 +21,12 @@ class AudioManager(QObject):
             
         self.active_clips = {} 
 
-    def tick(self, current_time_ms: int, active_clips: list):
+    def tick(self, current_time_ms: int, active_clips: list, is_seeking: bool = False):
         current_time_sec = current_time_ms / 1000.0
         active_ids = {clip.subtitle_id for clip in active_clips}
         
-        if abs(current_time_ms - self.last_sync_time) > 300:
+        # Kết hợp cờ is_seeking với heuristic 300ms cũ
+        if is_seeking or abs(current_time_ms - self.last_sync_time) > 300:
             self.stop_all()
             self.active_clips.clear()
             

@@ -52,7 +52,8 @@ class TTSWorker(QThread):
                     speed=task.speed,
                     pitch=task.pitch,
                     emotion=task.emotion,
-                    output_path=task.output_path
+                    output_path=task.output_path,
+                    subtitle_id=task.subtitle_id
                 )
 
                 if duration and duration > 0:

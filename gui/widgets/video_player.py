@@ -27,7 +27,6 @@ class VideoPlayerWidget(QWidget):
     seek_requested = Signal(int)
     def __init__(self):
         super().__init__()
-        seek_requested = Signal(int)
         self.player = QMediaPlayer()
         self.video_widget = QVideoWidget()
         
