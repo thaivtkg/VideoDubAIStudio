@@ -5,6 +5,7 @@ __pycache__/
 venv/
 env/
 
+
 # Project Specific (Tránh push file Media và file sinh ra tự động)
 cache/
 Temp/
@@ -19,6 +20,7 @@ tests/
 bin/
 *.srt
 ffmpeg.exe
+vendor/
 
 # IDE settings
 .vscode/

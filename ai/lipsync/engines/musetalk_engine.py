@@ -1,70 +1,74 @@
 import os
-import gc
-import torch
+import json
+import subprocess
+import tempfile
+import sys
 from ai.lipsync.base_lipsync import BaseLipSyncEngine
 from ai.lipsync.config import LipSyncConfig, LipSyncResult
 
 class MuseTalkEngine(BaseLipSyncEngine):
     def __init__(self):
-        self.model = None
-        self.device = "cpu"
-        self.dtype = torch.float32
+        self.worker_script = "ai/lipsync/workers/musetalk_worker.py"
 
     def supports(self, config: LipSyncConfig) -> bool:
-        # MuseTalk chạy tốt nhất ở FP16 trên CUDA (rất hợp với RTX 3050)
         return True
 
     def load_model(self, config: LipSyncConfig) -> None:
-        """Phase 2.1: Nạp trọng số (Weights) của MuseTalk vào VRAM một cách có kiểm soát"""
-        print("[MuseTalk Engine] Đang nạp mô hình vào VRAM...")
-        self.device = "cuda" if torch.cuda.is_available() and config.device in ["auto", "cuda"] else "cpu"
-        self.dtype = torch.float16 if config.use_fp16 and self.device == "cuda" else torch.float32
-
-        # ---------------------------------------------------------
-        # TODO: Tích hợp mã nguồn nạp Pipeline MuseTalk thật vào đây
-        # Ví dụ: 
-        # from musetalk.pipelines import MuseTalkPipeline
-        # self.model = MuseTalkPipeline.from_pretrained("path/to/weights", torch_dtype=self.dtype).to(self.device)
-        # ---------------------------------------------------------
-        
-        self.model = "Mock_MuseTalk_Loaded" # Placeholder để pass qua Benchmark
+        """Adapter không giữ Model trên RAM, nên hàm này không làm gì cả (No-op)"""
+        pass
 
     def unload_model(self) -> None:
-        """Phase 2.3: Xóa sổ Model khỏi VRAM ngay lập tức sau khi xong việc"""
-        print("[MuseTalk Engine] Giải phóng VRAM...")
-        if self.model is not None:
-            del self.model
-            self.model = None
-            
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        """OS sẽ tự thu hồi VRAM khi Subprocess tắt, Adapter không cần can thiệp"""
+        pass
 
     def process(
         self, video_path: str, audio_path: str, face_data: dict, output_path: str, config: LipSyncConfig
     ) -> LipSyncResult:
-        """Phase 2.2: Chạy Inference trên vùng miệng với chế độ tiết kiệm VRAM"""
-        if not self.model:
-            raise RuntimeError("Model chưa được nạp. Hãy gọi load_model() trước.")
-
-        print(f"[MuseTalk Engine] Đang xử lý Lip Sync cho: {os.path.basename(video_path)}")
-        total_frames = face_data.get("total_frames", 0)
+        """Tạo Subprocess độc lập để chạy MuseTalk"""
+        print(f"[MuseTalk Adapter] Chuẩn bị khởi chạy Worker cho: {os.path.basename(video_path)}")
         
-        # [CHIẾN THUẬT CHỐNG OOM] Ép Torch không lưu Gradient và tự động ép kiểu FP16
-        with torch.inference_mode():
-            if self.dtype == torch.float16:
-                with torch.autocast(device_type="cuda", dtype=torch.float16):
-                    # ---------------------------------------------------------
-                    # TODO: Vòng lặp Crop mặt -> Gọi MuseTalk inference -> Dán mặt lại
-                    # Khuyến nghị: Duyệt qua từng batch nhỏ (config.batch_size) thay vì nạp cả video
-                    # ---------------------------------------------------------
-                    pass
-            else:
-                pass # Chạy thuần FP32 nếu không dùng FP16
+        # 1. Ghi face_data ra file tạm để truyền cho Subprocess
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as tmp_face:
+            json.dump(face_data, tmp_face)
+            tmp_face_path = tmp_face.name
 
-        return LipSyncResult(
-            output_path=output_path,
-            duration=0.0, # Tính sau
-            frames_processed=total_frames,
-            faces_detected=len(face_data.get("frames", {}))
-        )
+        try:
+            # 2. Xây dựng lệnh gọi Worker
+            command = [
+                sys.executable, self.worker_script,
+                "--video", video_path,
+                "--audio", audio_path,
+                "--face_json", tmp_face_path,
+                "--output", output_path,
+                "--device", config.device,
+                "--batch_size", str(config.batch_size)
+            ]
+            
+            if config.use_fp16:
+                command.append("--fp16")
+
+            # 3. Khởi chạy và chờ kết quả
+            print(f"[MuseTalk Adapter] Đang chạy AI Inference trong tiến trình cô lập...")
+            process = subprocess.run(command, capture_output=True, text=True, check=True)
+            
+            # Đọc log từ Worker (Dòng cuối cùng phải là JSON Result)
+            lines = process.stdout.strip().split('\n')
+            result_data = json.loads(lines[-1])
+            
+            print(f"[MuseTalk Adapter] Worker hoàn tất. VRAM đã được hệ thống thu hồi.")
+            
+            return LipSyncResult(
+                output_path=result_data["output_path"],
+                duration=result_data["duration"],
+                frames_processed=result_data["frames_processed"],
+                faces_detected=result_data["faces_detected"]
+            )
+
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"Lỗi khi chạy MuseTalk Worker: {e.stderr}\n{e.stdout}")
+        except json.JSONDecodeError:
+            raise RuntimeError(f"Worker trả về dữ liệu không hợp lệ. Output: {process.stdout}")
+        finally:
+            # Dọn dẹp file tạm
+            if os.path.exists(tmp_face_path):
+                os.remove(tmp_face_path)
