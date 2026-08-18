@@ -192,3 +192,7 @@ Xử lý triệt để các rủi ro liên quan đến mất dấu khuôn mặt 
 1.  **Ngưỡng níu giữ (Hold-Last-Box Limit):** Giới hạn thời gian bảo lưu tọa độ khuôn mặt cũ tối đa 15 frames (~0.5 giây). Nếu nhân vật hoàn toàn rời khỏi khung hình (Camera cut), hệ thống ngắt Box cũ để tránh hiện tượng render "bóng ma" (Stale Face Tracking).
 2.  **Kìm kẹp tọa độ (Box Clamping):** Áp dụng thuật toán giới hạn tọa độ Bounding Box, triệt tiêu hoàn toàn rủi ro tọa độ âm ($x < 0, y < 0$) hoặc tràn viền màn hình khiến các bộ giải mã CV2/FFmpeg bị lỗi biên dịch.
 
+
+```
+
+```
