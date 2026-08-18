@@ -147,6 +147,17 @@ Kết quả trả về định dạng JSON, bao gồm: `execution_time_sec`, `pe
 | **CUDA Out of Memory (OOM)** | Các tiến trình HĐH (Trình duyệt, DWM, OBS) chiếm dụng VRAM khả dụng (hiện tượng thường thấy ở GPU 4GB) | Dọn dẹp ứng dụng chạy ngầm trước khi render. Bắt buộc kích hoạt cờ `--fp16` và `--batch_size 1`. |
 | **Lỗi Face Metadata không đồng bộ** | Hệ thống MuseTalk gốc tự kích hoạt logic nhận diện khuôn mặt làm tràn VRAM do không đọc Cache JSON | Đảm bảo file `face_json` chuẩn định dạng. Quá trình Worker đã bypass logic gốc và truyền trực tiếp bounding_box tọa độ. |
 
+## 6. Kiến trúc Xử lý đa luồng (Non-blocking GUI)
+
+VideoDubAIStudio sử dụng kiến trúc phân tách luồng nghiêm ngặt để đảm bảo trải nghiệm người dùng (UX) không bị gián đoạn khi xử lý các tác vụ AI nặng:
+
+*   **Main Process (UI Thread):** Chỉ chịu trách nhiệm tiếp nhận sự kiện (click, kéo thả) và hiển thị tiến độ. Tuyệt đối KHÔNG import `torch` hoặc khởi tạo Model AI tại luồng này để tránh rò rỉ bộ nhớ.
+*   **QThread Worker (`LipSyncQWorker`):** Luồng trung gian làm nhiệm vụ gọi và giám sát subprocess.
+*   **Subprocess Worker (`musetalk_worker.py`):** Tiến trình độc lập tương tác trực tiếp với GPU. Khi tiến trình này hoàn tất hoặc bị hủy, hệ điều hành (OS) sẽ tự động thu hồi 100% VRAM (Hard CUDA Process Boundary).
+
+**Luồng dữ liệu giao tiếp:**
+`GUI Button Click` ➔ `LipSyncQWorker.start()` ➔ `Subprocess.run()` ➔ `Emit Signals (Progress/Error)` ➔ `GUI Update`
+
 ```
 
 ```
