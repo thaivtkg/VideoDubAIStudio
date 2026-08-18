@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from ai.tts.lipsync.config import LipSyncConfig, LipSyncResult
+from ai.lipsync.config import LipSyncConfig, LipSyncResult
 
 class BaseLipSyncEngine(ABC):
 

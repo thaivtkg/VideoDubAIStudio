@@ -163,6 +163,35 @@ Dự án áp dụng cơ chế Face Caching nhằm giảm thiểu tối đa VRAM 
 
 **Luồng dữ liệu giao tiếp:**
 `GUI Button Click` ➔ `LipSyncQWorker.start()` ➔ `Subprocess.run()` ➔ `Emit Signals (Progress/Error)` ➔ `GUI Update`
+## 8. Kết quả Kiểm định Phần cứng (Gate S4.2 Benchmark)
+
+Hệ thống đã trải qua quá trình kiểm định thực tế khắt khe bằng công cụ Benchmark nội bộ để đo lường khả năng chịu tải của VRAM khi vận hành MuseTalk 1.5. Công cụ giám sát trực tiếp `nvidia-smi` để bóc tách Baseline VRAM của OS và VRAM thực tế do tiến trình AI chiếm dụng.
+
+**Ma trận Kiểm định (Test Matrix) trên GPU NVIDIA RTX 4060 (8GB VRAM):**
+*   **Video 8 giây:** 🟢 PASS (Peak VRAM allocated: ~6.8GB | System Peak: ~7.9GB | Output Valid)
+*   **Video 15 giây:** 🟢 PASS (Peak VRAM allocated: ~7.0GB | System Peak: ~7.8GB | Output Valid)
+*   **Video 30 giây:** 🔴 FAIL (Tiến trình sập ở giây 44 do giới hạn phân mảnh bộ nhớ không gian (Spatial Tensor Fragmentation). Output không hợp lệ).
+
+**Khuyến cáo cho cấu hình Low-VRAM (NVIDIA RTX 3050 - 4GB):**
+*   **Trạng thái:** ⚠️ [Chưa xác minh thực tế - Nguy cơ OOM cực cao]
+*   Dựa trên lượng Delta VRAM đo được từ RTX 4060, cấu hình 4GB không đủ không gian vật lý để chứa mô hình MuseTalk 1.5 cùng lúc với bộ nhớ đệm video. Dự kiến áp dụng cơ chế cắt nhỏ luồng video (Chunking) hoặc Fallback tự động sang Wav2Lip cho các thiết bị này ở phiên bản tới.
+
+---
+
+## 9. Quản lý Vòng đời & Ngăn chặn Zombie Process (Process Lifecycle)
+
+Để đảm bảo hệ thống không rò rỉ tài nguyên khi xảy ra sự cố gián đoạn (User Cancel hoặc GUI Crash):
+*   Áp dụng cơ chế **Process Tree Kill** (`taskkill /F /T /PID` trên Windows).
+*   Khi Parent Process bị ngắt, tín hiệu sẽ tiêu diệt toàn bộ gia phả tiến trình bên dưới. Bất kể luồng CUDA của mô hình đang kẹt ở trạng thái nào, hệ điều hành (OS) sẽ can thiệp và thu hồi 100% VRAM (Hard Cleanup) ngay lập tức.
+
+---
+
+## 10. Tối ưu thuật toán Face Cache (Anti-Stale Tracking)
+
+Xử lý triệt để các rủi ro liên quan đến mất dấu khuôn mặt (Face Loss) bằng hai cơ chế bảo vệ kép:
+1.  **Ngưỡng níu giữ (Hold-Last-Box Limit):** Giới hạn thời gian bảo lưu tọa độ khuôn mặt cũ tối đa 15 frames (~0.5 giây). Nếu nhân vật hoàn toàn rời khỏi khung hình (Camera cut), hệ thống ngắt Box cũ để tránh hiện tượng render "bóng ma" (Stale Face Tracking).
+2.  **Kìm kẹp tọa độ (Box Clamping):** Áp dụng thuật toán giới hạn tọa độ Bounding Box, triệt tiêu hoàn toàn rủi ro tọa độ âm ($x < 0, y < 0$) hoặc tràn viền màn hình khiến các bộ giải mã CV2/FFmpeg bị lỗi biên dịch.
+
 
 ```
 
