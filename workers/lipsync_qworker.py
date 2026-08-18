@@ -53,6 +53,13 @@ class LipSyncQWorker(QThread):
             self.signals.error.emit(f"Lỗi hệ thống: {str(e)}")
             
     def cancel(self):
-        """Hàm kích hoạt cờ hủy (Dành cho nút Cancel trên giao diện)"""
+        """Hàm này được gọi từ UI (Main Thread) khi người dùng bấm nút [Hủy] hoặc đóng cửa sổ"""
         self._is_cancelled = True
-        # Tương lai sẽ thêm logic kill PID của subprocess tại đây   
+        
+        # Bắn tín hiệu chọc thẳng xuống Manager để bóp nghẹt subprocess đang chạy
+        if hasattr(self, 'manager') and self.manager:
+            self.manager.cancel_process()
+            
+        # Thoát QThread an toàn
+        self.quit()
+        self.wait()
