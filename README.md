@@ -155,6 +155,12 @@ VideoDubAIStudio sử dụng kiến trúc phân tách luồng nghiêm ngặt đ�
 *   **QThread Worker (`LipSyncQWorker`):** Luồng trung gian làm nhiệm vụ gọi và giám sát subprocess.
 *   **Subprocess Worker (`musetalk_worker.py`):** Tiến trình độc lập tương tác trực tiếp với GPU. Khi tiến trình này hoàn tất hoặc bị hủy, hệ điều hành (OS) sẽ tự động thu hồi 100% VRAM (Hard CUDA Process Boundary).
 
+## 7. Quản lý Dữ liệu Khuôn mặt (Face Cache Management)
+
+Dự án áp dụng cơ chế Face Caching nhằm giảm thiểu tối đa VRAM khi chạy Lip Sync.
+*   **Schema Versioning:** Cache được định cấu trúc JSON theo `schema_version`, cho phép hệ thống nhận biết các tệp cache lỗi thời (ví dụ khi thay đổi thư viện Face Detector) để tự động tái tạo.
+*   **Hold-Last-Box Algorithm:** Xử lý triệt để bài toán Face Loss (nhân vật quay mặt, bị che khuất) bằng cách nội suy / níu giữ tọa độ (bounding box) của khung hình hợp lệ gần nhất. Ngăn chặn triệt để tình trạng MuseTalk Worker bị sập ngang do khuyết dữ liệu đầu vào.
+
 **Luồng dữ liệu giao tiếp:**
 `GUI Button Click` ➔ `LipSyncQWorker.start()` ➔ `Subprocess.run()` ➔ `Emit Signals (Progress/Error)` ➔ `GUI Update`
 
