@@ -1,4 +1,4 @@
-```markdown
+
 # VideoDubAIStudio - Hướng dẫn Cài đặt & Triển khai
 
 Tài liệu này cung cấp quy trình cài đặt, cấu hình và khởi chạy dự án VideoDubAIStudio. Trọng tâm của tài liệu hướng đến việc vận hành kiến trúc **Process Isolation** cho module Lip Sync (MuseTalk), nhằm đảm bảo an toàn VRAM trên các thiết bị có tài nguyên phần cứng giới hạn.
