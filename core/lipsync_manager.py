@@ -1,5 +1,4 @@
 import gc
-import torch
 from core.face_manager import FaceManager
 from ai.lipsync.engines.musetalk_engine import MuseTalkEngine
 from ai.lipsync.config import LipSyncConfig
@@ -16,8 +15,6 @@ class LipSyncManager:
     def _clean_gpu_memory(self):
         """Công cụ dọn rác bắt buộc giữa các Phase"""
         gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
 
     def process_lipsync(self, engine_name: str, video_path: str, audio_path: str, output_path: str, config: LipSyncConfig):
         """Chu trình 3 Phase chuẩn mực để bảo vệ hệ thống 4GB VRAM"""
